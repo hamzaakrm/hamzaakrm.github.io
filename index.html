@@ -171,6 +171,19 @@
   }
   @media(max-width:560px){ .figure{height:440px;} .float{font-size:11px;padding:7px 10px;} .f3,.f4{display:none;} }
   @media(prefers-reduced-motion:reduce){.halo,.ring,.float{animation:none!important;}}
+
+  /* SOUND TOGGLE */
+  .sound-btn{position:fixed;right:20px;bottom:20px;z-index:100;display:flex;align-items:center;gap:10px;padding:10px 16px 10px 12px;border-radius:100px;
+    background:rgba(20,20,20,.6);border:1px solid var(--border);color:var(--text);font:600 12.5px/1 inherit;font-family:inherit;cursor:pointer;
+    -webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);transition:border-color .2s,background .2s;}
+  .sound-btn:hover{border-color:var(--accent);}
+  .sound-btn.on{background:rgba(255,77,77,.16);border-color:var(--accent);}
+  .eq{display:flex;align-items:flex-end;gap:2px;height:14px;width:16px;}
+  .eq i{display:block;width:3px;height:3px;background:var(--accent);border-radius:2px;transition:height .3s;}
+  .sound-btn.on .eq i{animation:eq 1s ease-in-out infinite;}
+  .sound-btn.on .eq i:nth-child(2){animation-delay:-.4s}.sound-btn.on .eq i:nth-child(3){animation-delay:-.7s}.sound-btn.on .eq i:nth-child(4){animation-delay:-.2s}
+  @keyframes eq{0%,100%{height:3px}50%{height:14px}}
+  @media(max-width:560px){.sound-btn span.lbl{display:none;}.sound-btn{padding:11px;}}
 </style>
 </head>
 <body>
@@ -408,6 +421,62 @@ var cvData = "data:application/pdf;base64,JVBERi0xLjcKJcK1wrYKJSBXcml0dGVuIGJ5IE
 document.getElementById('dlBtn').setAttribute('href', cvData);
 document.getElementById('dlBtn2').setAttribute('href', cvData);
 document.getElementById('dlBtn3').setAttribute('href', cvData);
+</script>
+<button class="sound-btn" id="soundBtn" aria-pressed="false" title="Play ambient background music">
+  <span class="eq"><i></i><i></i><i></i><i></i></span><span class="lbl">Sound off</span>
+</button>
+<script>
+(function(){
+  var btn=document.getElementById('soundBtn'), lbl=btn.querySelector('.lbl');
+  var ctx=null, master=null, playing=false, timers=[];
+  // A minor-ish dreamy progression: Am9, Fmaj7, Cmaj7, G6 (frequencies in Hz)
+  var chords=[[110,164.81,261.63,329.63,493.88],[87.31,174.61,261.63,329.63,440],[130.81,196,246.94,329.63,392],[98,146.83,246.94,293.66,329.63]];
+  var pent=[440,523.25,587.33,659.25,783.99,880,1046.5];
+  var step=0, CH=8; // seconds per chord
+  function impulse(sec){var len=ctx.sampleRate*sec,b=ctx.createBuffer(2,len,ctx.sampleRate);
+    for(var c=0;c<2;c++){var d=b.getChannelData(c);for(var i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/len,3);}return b;}
+  function build(){
+    ctx=new (window.AudioContext||window.webkitAudioContext)();
+    master=ctx.createGain(); master.gain.value=0;
+    var comp=ctx.createDynamicsCompressor(); master.connect(comp); comp.connect(ctx.destination);
+    var rev=ctx.createConvolver(); rev.buffer=impulse(4); var wet=ctx.createGain(); wet.gain.value=.55;
+    rev.connect(wet); wet.connect(master);
+    ctx.bus=ctx.createGain(); ctx.bus.connect(master); ctx.bus.connect(rev);
+  }
+  function pad(freqs,t){
+    var f=ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.setValueAtTime(500,t); f.frequency.linearRampToValueAtTime(1100,t+CH/2); f.frequency.linearRampToValueAtTime(500,t+CH+2);
+    var g=ctx.createGain(); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(.05,t+2.5); g.gain.setValueAtTime(.05,t+CH-1); g.gain.linearRampToValueAtTime(0,t+CH+2.5);
+    f.connect(g); g.connect(ctx.bus);
+    freqs.forEach(function(fr){[-6,6].forEach(function(det){var o=ctx.createOscillator();o.type='sawtooth';o.frequency.value=fr;o.detune.value=det;o.connect(f);o.start(t);o.stop(t+CH+3);});});
+  }
+  function pluck(t){
+    var o=ctx.createOscillator(),g=ctx.createGain();o.type='sine';o.frequency.value=pent[Math.floor(Math.random()*pent.length)];
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.06,t+.02);g.gain.exponentialRampToValueAtTime(.0001,t+2.2);
+    o.connect(g);g.connect(ctx.bus);o.start(t);o.stop(t+2.4);
+  }
+  function schedule(){
+    if(!playing)return;
+    var t=ctx.currentTime+.1; pad(chords[step%chords.length],t);
+    for(var i=0;i<6;i++) if(Math.random()<.6) pluck(t+i*(CH/6)+Math.random()*.3);
+    step++; timers.push(setTimeout(schedule,CH*1000));
+  }
+  function start(){
+    if(!ctx)build(); ctx.resume(); playing=true;
+    master.gain.cancelScheduledValues(ctx.currentTime); master.gain.setValueAtTime(master.gain.value,ctx.currentTime);
+    master.gain.linearRampToValueAtTime(.8,ctx.currentTime+3); schedule();
+  }
+  function stop(){
+    playing=false; timers.forEach(clearTimeout); timers=[];
+    master.gain.cancelScheduledValues(ctx.currentTime); master.gain.setValueAtTime(master.gain.value,ctx.currentTime);
+    master.gain.linearRampToValueAtTime(0,ctx.currentTime+1.2);
+    setTimeout(function(){if(!playing)ctx.suspend();},1400);
+  }
+  btn.addEventListener('click',function(){
+    if(playing){stop();btn.classList.remove('on');lbl.textContent='Sound off';btn.setAttribute('aria-pressed','false');}
+    else{start();btn.classList.add('on');lbl.textContent='Sound on';btn.setAttribute('aria-pressed','true');}
+  });
+  document.addEventListener('visibilitychange',function(){ if(ctx&&playing){ document.hidden?ctx.suspend():ctx.resume(); } });
+})();
 </script>
 </body>
 </html>
